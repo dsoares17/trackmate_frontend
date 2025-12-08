@@ -11,6 +11,7 @@ type Profile = {
   car: string | null;
   experience_level: string | null;
   preferred_tracks: string | null;
+  is_public_profile: boolean | null;
 };
 
 export default function ProfilePage() {
@@ -26,6 +27,7 @@ export default function ProfilePage() {
   const [car, setCar] = useState('');
   const [experienceLevel, setExperienceLevel] = useState('');
   const [preferredTracks, setPreferredTracks] = useState('');
+  const [isPublicProfile, setIsPublicProfile] = useState(true);
 
   useEffect(() => {
     async function loadProfile() {
@@ -61,6 +63,7 @@ export default function ProfilePage() {
         setCar(profile.car ?? '');
         setExperienceLevel(profile.experience_level ?? '');
         setPreferredTracks(profile.preferred_tracks ?? '');
+        setIsPublicProfile(profile.is_public_profile ?? true);
       }
 
       setLoading(false);
@@ -92,6 +95,7 @@ export default function ProfilePage() {
       car: car || null,
       experience_level: experienceLevel || null,
       preferred_tracks: preferredTracks || null,
+      is_public_profile: isPublicProfile,
       updated_at: new Date().toISOString(),
     });
 
@@ -196,6 +200,16 @@ export default function ProfilePage() {
                 onChange={(e) => setPreferredTracks(e.target.value)}
               />
             </div>
+
+            <label className="flex items-center gap-2 text-sm text-slate-300">
+              <input
+                type="checkbox"
+                className="h-4 w-4"
+                checked={isPublicProfile}
+                onChange={(e) => setIsPublicProfile(e.target.checked)}
+              />
+              <span>Make my profile public (show my name on leaderboards and allow a public profile page)</span>
+            </label>
 
             {errorMsg && (
               <p className="text-sm text-red-400">

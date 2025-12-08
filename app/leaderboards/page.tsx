@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import TopNav from '../_components/TopNav';
+import Link from 'next/link';
 
 type Track = {
   id: string;
@@ -20,6 +21,7 @@ type Car = {
 type Profile = {
   id: string;
   display_name: string | null;
+  is_public_profile: boolean | null;
 };
 
 type Lap = {
@@ -48,6 +50,7 @@ export default function LeaderboardsPage() {
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
   const [tracks, setTracks] = useState<Track[]>([]);
   const [cars, setCars] = useState<Car[]>([]);
@@ -72,11 +75,12 @@ export default function LeaderboardsPage() {
       }
 
       setIsLoggedIn(true);
+      setCurrentUserId(userData.user.id);
 
       const [tracksRes, carsRes, profilesRes, lapsRes] = await Promise.all([
         supabase.from('tracks').select('*').order('name', { ascending: true }),
         supabase.from('cars').select('*'),
-        supabase.from('profiles').select('id, display_name'),
+        supabase.from('profiles').select('id, display_name, is_public_profile'),
         supabase.from('laps').select('*').eq('is_public', true).order('lap_time_ms', { ascending: true }),
       ]);
 
@@ -162,6 +166,21 @@ export default function LeaderboardsPage() {
   // Sort by lap_time_ms ascending (fastest first)
   filteredLaps = [...filteredLaps].sort((a, b) => a.lap_time_ms - b.lap_time_ms);
 
+  // Compute my best public lap and rank on the selected track
+  let myBestLap: Lap | null = null;
+  let myRank: number | null = null;
+
+  if (currentUserId && selectedTrackId) {
+    const indexInGlobal = filteredLaps.findIndex(
+      (lap) => lap.user_id === currentUserId
+    );
+
+    if (indexInGlobal !== -1) {
+      myBestLap = filteredLaps[indexInGlobal];
+      myRank = indexInGlobal + 1;
+    }
+  }
+
   return (
     <>
       <TopNav />
@@ -220,6 +239,23 @@ export default function LeaderboardsPage() {
             </div>
           </div>
 
+          {/* My Rank */}
+          {selectedTrackId && myBestLap && myRank && (
+            <div className="rounded-lg border border-sky-500/50 bg-sky-500/10 p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-sky-400 font-semibold">Your Rank</p>
+                  <p className="text-slate-300 text-sm">
+                    #{myRank} on {trackMap.get(selectedTrackId)?.name}
+                  </p>
+                </div>
+                <p className="text-2xl font-bold tabular-nums text-sky-400">
+                  {formatLapTime(myBestLap.lap_time_ms)}
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Leaderboard */}
           <div className="space-y-2">
             {!selectedTrackId ? (
@@ -228,29 +264,48 @@ export default function LeaderboardsPage() {
               <p className="text-sm text-slate-400">No public laps match these filters yet.</p>
             ) : (
               filteredLaps.map((lap, index) => {
-                const track = trackMap.get(lap.track_id);
-                const car = carMap.get(lap.car_id);
-                const profile = profileMap.get(lap.user_id);
+              const track = trackMap.get(lap.track_id);
+              const car = carMap.get(lap.car_id);
+              const profile = profileMap.get(lap.user_id);
 
-                const position = index + 1;
-                const trackName = track?.name ?? 'Unknown track';
-                const driverName = profile?.display_name ?? 'Unknown driver';
-                const carName = car ? `${car.make ?? ''} ${car.model ?? ''}`.trim() || 'Unknown car' : 'Unknown car';
+              const position = index + 1;
+              const trackName = track?.name ?? 'Unknown track';
+              const carName = car ? `${car.make ?? ''} ${car.model ?? ''}`.trim() || 'Unknown car' : 'Unknown car';
 
-                return (
-                  <div
-                    key={lap.id}
-                    className="flex items-center gap-4 rounded-lg border border-slate-800 bg-slate-900 px-4 py-3"
-                  >
-                    <div className="w-8 text-center font-bold text-sky-400">
-                      {position}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="font-medium truncate">{trackName}</p>
-                      <p className="text-sm text-slate-400 truncate">
-                        {driverName} • {carName}
-                      </p>
-                    </div>
+              const isPublicProfile = profile?.is_public_profile ?? true;
+              let driverName = 'Anonymous driver';
+              if (profile && isPublicProfile) {
+                driverName = profile.display_name || 'Unnamed driver';
+              }
+
+              const isMe = lap.user_id === currentUserId;
+              if (isMe) {
+                driverName = 'You';
+              }
+
+              return (
+                <div
+                  key={lap.id}
+                  className={`flex items-center gap-4 rounded-lg border px-4 py-3 ${
+                    isMe ? 'border-sky-500 bg-sky-500/10' : 'border-slate-800 bg-slate-900'
+                  }`}
+                >
+                  <div className="w-8 text-center font-bold text-sky-400">
+                    {position}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium truncate">{trackName}</p>
+                    <p className="text-sm text-slate-400 truncate">
+                      {profile && (isPublicProfile || isMe) ? (
+                        <Link href={`/driver/${profile.id}`} className="hover:text-sky-400 transition">
+                          {driverName}
+                        </Link>
+                      ) : (
+                        <span>{driverName}</span>
+                      )}
+                      {' • '}{carName}
+                    </p>
+                  </div>
                     <div className="text-right">
                       <p className="text-lg font-bold tabular-nums">
                         {formatLapTime(lap.lap_time_ms)}

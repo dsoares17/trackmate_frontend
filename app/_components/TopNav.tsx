@@ -1,17 +1,30 @@
 'use client';
 
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
-
-const navItems = [
-  { href: '/', label: 'Home' },
-  { href: '/profile', label: 'Profile' },
-  { href: '/cars', label: 'Garage' },
-  { href: '/tracks', label: 'Tracks' },
-  { href: '/laps', label: 'Laps' },
-  { href: '/leaderboards', label: 'Leaderboards' },
-];
+import { supabase } from '@/lib/supabaseClient';
 
 export default function TopNav() {
+  const [userId, setUserId] = useState<string | null>(null);
+
+  useEffect(() => {
+    async function loadUser() {
+      const { data } = await supabase.auth.getUser();
+      setUserId(data.user?.id ?? null);
+    }
+    loadUser();
+  }, []);
+
+  // Build nav items with dynamic Profile link
+  const navItems = [
+    { href: '/', label: 'Home' },
+    { href: userId ? `/driver/${userId}` : '/profile', label: 'Profile' },
+    { href: '/cars', label: 'Garage' },
+    { href: '/tracks', label: 'Tracks' },
+    { href: '/laps', label: 'Laps' },
+    { href: '/leaderboards', label: 'Leaderboards' },
+  ];
+
   return (
     <header className="border-b border-slate-800 bg-slate-900">
       <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3">
@@ -36,4 +49,3 @@ export default function TopNav() {
     </header>
   );
 }
-
