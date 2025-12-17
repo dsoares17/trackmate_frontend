@@ -32,6 +32,7 @@ type Lap = {
   lap_time_ms: number;
   date: string | null;
   is_public: boolean | null;
+  conditions: string | null;
 };
 
 function formatLapTime(ms: number): string {
@@ -61,6 +62,7 @@ export default function LeaderboardsPage() {
   const [selectedTrackId, setSelectedTrackId] = useState('');
   const [selectedCarId, setSelectedCarId] = useState('');
   const [driverSearch, setDriverSearch] = useState('');
+  const [conditionsFilter, setConditionsFilter] = useState('');
 
   useEffect(() => {
     async function loadData() {
@@ -154,6 +156,16 @@ export default function LeaderboardsPage() {
     filteredLaps = filteredLaps.filter((l) => l.car_id === selectedCarId);
   }
 
+  // Conditions filter
+  if (conditionsFilter) {
+    filteredLaps = filteredLaps.filter((l) => {
+      if (conditionsFilter === 'dry') {
+        return l.conditions === 'dry_warm' || l.conditions === 'dry_cool';
+      }
+      return l.conditions === conditionsFilter;
+    });
+  }
+
   if (driverSearch.trim()) {
     const searchLower = driverSearch.trim().toLowerCase();
     filteredLaps = filteredLaps.filter((l) => {
@@ -166,17 +178,33 @@ export default function LeaderboardsPage() {
   // Sort by lap_time_ms ascending (fastest first)
   filteredLaps = [...filteredLaps].sort((a, b) => a.lap_time_ms - b.lap_time_ms);
 
+  // Deduplicate: Keep only the BEST lap per (user_id, car_id, track_id)
+  // Since laps are already sorted by time, the first occurrence is the best
+  const seenCombinations = new Set<string>();
+  const uniqueBestLaps: Lap[] = [];
+
+  for (const lap of filteredLaps) {
+    const key = `${lap.user_id}__${lap.car_id}__${lap.track_id}`;
+    if (!seenCombinations.has(key)) {
+      seenCombinations.add(key);
+      uniqueBestLaps.push(lap);
+    }
+  }
+
+  // Use uniqueBestLaps for display
+  const displayLaps = uniqueBestLaps;
+
   // Compute my best public lap and rank on the selected track
   let myBestLap: Lap | null = null;
   let myRank: number | null = null;
 
   if (currentUserId && selectedTrackId) {
-    const indexInGlobal = filteredLaps.findIndex(
+    const indexInGlobal = displayLaps.findIndex(
       (lap) => lap.user_id === currentUserId
     );
 
     if (indexInGlobal !== -1) {
-      myBestLap = filteredLaps[indexInGlobal];
+      myBestLap = displayLaps[indexInGlobal];
       myRank = indexInGlobal + 1;
     }
   }
@@ -193,7 +221,7 @@ export default function LeaderboardsPage() {
           )}
 
           {/* Filter bar */}
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-3 rounded-lg border border-slate-800 bg-slate-900 p-4">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4 rounded-lg border border-slate-800 bg-slate-900 p-4">
             <div>
               <label className="block text-sm mb-1">Track</label>
               <select
@@ -228,10 +256,24 @@ export default function LeaderboardsPage() {
             </div>
 
             <div>
+              <label className="block text-sm mb-1">Conditions</label>
+              <select
+                className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
+                value={conditionsFilter}
+                onChange={(e) => setConditionsFilter(e.target.value)}
+              >
+                <option value="">All conditions</option>
+                <option value="dry">Dry</option>
+                <option value="damp">Damp</option>
+                <option value="wet">Wet</option>
+              </select>
+            </div>
+
+            <div>
               <label className="block text-sm mb-1">Driver</label>
               <input
                 type="text"
-                placeholder="Search by display name"
+                placeholder="Search by name"
                 className="w-full rounded-md border border-slate-700 bg-slate-950 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
                 value={driverSearch}
                 onChange={(e) => setDriverSearch(e.target.value)}
@@ -260,10 +302,10 @@ export default function LeaderboardsPage() {
           <div className="space-y-2">
             {!selectedTrackId ? (
               <p className="text-sm text-slate-400">Select a track to see the leaderboard.</p>
-            ) : filteredLaps.length === 0 ? (
+            ) : displayLaps.length === 0 ? (
               <p className="text-sm text-slate-400">No public laps match these filters yet.</p>
             ) : (
-              filteredLaps.map((lap, index) => {
+              displayLaps.map((lap, index) => {
               const track = trackMap.get(lap.track_id);
               const car = carMap.get(lap.car_id);
               const profile = profileMap.get(lap.user_id);

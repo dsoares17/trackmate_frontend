@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import { useRouter } from 'next/navigation';
 import TopNav from '../_components/TopNav';
+import Cropper, { Area } from 'react-easy-crop';
 
 type Profile = {
   display_name: string | null;
@@ -12,7 +13,62 @@ type Profile = {
   experience_level: string | null;
   preferred_tracks: string | null;
   is_public_profile: boolean | null;
+  avatar_url: string | null;
 };
+
+// Helper function to create cropped image
+async function getCroppedImg(
+  imageSrc: string,
+  pixelCrop: Area,
+  fileName: string
+): Promise<File> {
+  const image = await createImage(imageSrc);
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+
+  if (!ctx) {
+    throw new Error('No 2d context');
+  }
+
+  // Set canvas size to the cropped area
+  canvas.width = pixelCrop.width;
+  canvas.height = pixelCrop.height;
+
+  // Draw the cropped image
+  ctx.drawImage(
+    image,
+    pixelCrop.x,
+    pixelCrop.y,
+    pixelCrop.width,
+    pixelCrop.height,
+    0,
+    0,
+    pixelCrop.width,
+    pixelCrop.height
+  );
+
+  // Convert canvas to blob
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        reject(new Error('Canvas is empty'));
+        return;
+      }
+      const file = new File([blob], fileName, { type: 'image/jpeg' });
+      resolve(file);
+    }, 'image/jpeg', 0.9);
+  });
+}
+
+function createImage(url: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.addEventListener('load', () => resolve(image));
+    image.addEventListener('error', (error) => reject(error));
+    image.crossOrigin = 'anonymous';
+    image.src = url;
+  });
+}
 
 export default function ProfilePage() {
   const router = useRouter();
@@ -28,6 +84,19 @@ export default function ProfilePage() {
   const [experienceLevel, setExperienceLevel] = useState('');
   const [preferredTracks, setPreferredTracks] = useState('');
   const [isPublicProfile, setIsPublicProfile] = useState(true);
+  
+  // Avatar states
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const [avatarFile, setAvatarFile] = useState<File | null>(null);
+  const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
+  
+  // Crop modal states
+  const [isCropModalOpen, setIsCropModalOpen] = useState(false);
+  const [selectedImageUrl, setSelectedImageUrl] = useState<string | null>(null);
+  const [selectedFileName, setSelectedFileName] = useState<string>('avatar.jpg');
+  const [crop, setCrop] = useState({ x: 0, y: 0 });
+  const [zoom, setZoom] = useState(1);
+  const [croppedAreaPixels, setCroppedAreaPixels] = useState<Area | null>(null);
 
   useEffect(() => {
     async function loadProfile() {
@@ -64,6 +133,7 @@ export default function ProfilePage() {
         setExperienceLevel(profile.experience_level ?? '');
         setPreferredTracks(profile.preferred_tracks ?? '');
         setIsPublicProfile(profile.is_public_profile ?? true);
+        setAvatarUrl(profile.avatar_url ?? null);
       }
 
       setLoading(false);
@@ -71,6 +141,79 @@ export default function ProfilePage() {
 
     loadProfile();
   }, []);
+
+  // Cleanup object URLs on unmount
+  useEffect(() => {
+    return () => {
+      if (selectedImageUrl) {
+        URL.revokeObjectURL(selectedImageUrl);
+      }
+      if (avatarPreview) {
+        URL.revokeObjectURL(avatarPreview);
+      }
+    };
+  }, [selectedImageUrl, avatarPreview]);
+
+  function handleAvatarFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (file) {
+      // Cleanup previous URL if exists
+      if (selectedImageUrl) {
+        URL.revokeObjectURL(selectedImageUrl);
+      }
+      
+      const imageUrl = URL.createObjectURL(file);
+      setSelectedImageUrl(imageUrl);
+      setSelectedFileName(file.name);
+      setCrop({ x: 0, y: 0 });
+      setZoom(1);
+      setIsCropModalOpen(true);
+    }
+    // Reset input so same file can be selected again
+    e.target.value = '';
+  }
+
+  const onCropComplete = useCallback((croppedArea: Area, croppedAreaPixels: Area) => {
+    setCroppedAreaPixels(croppedAreaPixels);
+  }, []);
+
+  async function handleUseCrop() {
+    if (!selectedImageUrl || !croppedAreaPixels) return;
+
+    try {
+      const croppedFile = await getCroppedImg(
+        selectedImageUrl,
+        croppedAreaPixels,
+        selectedFileName
+      );
+
+      // Cleanup old preview URL
+      if (avatarPreview) {
+        URL.revokeObjectURL(avatarPreview);
+      }
+
+      // Create preview of cropped image
+      const previewUrl = URL.createObjectURL(croppedFile);
+      setAvatarPreview(previewUrl);
+      setAvatarFile(croppedFile);
+
+      // Cleanup selected image URL
+      URL.revokeObjectURL(selectedImageUrl);
+      setSelectedImageUrl(null);
+      setIsCropModalOpen(false);
+    } catch (err) {
+      console.error('Error cropping image:', err);
+      setErrorMsg('Failed to crop image. Please try again.');
+    }
+  }
+
+  function handleCancelCrop() {
+    if (selectedImageUrl) {
+      URL.revokeObjectURL(selectedImageUrl);
+    }
+    setSelectedImageUrl(null);
+    setIsCropModalOpen(false);
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -88,6 +231,32 @@ export default function ProfilePage() {
 
     const user = userData.user;
 
+    // Handle avatar upload if a new file was selected
+    let newAvatarUrl = avatarUrl;
+
+    if (avatarFile) {
+      const fileExt = avatarFile.name.split('.').pop() || 'jpg';
+      const filePath = `${user.id}/${Date.now()}.${fileExt}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('avatars')
+        .upload(filePath, avatarFile, {
+          upsert: true,
+        });
+
+      if (uploadError) {
+        setErrorMsg(`Avatar upload failed: ${uploadError.message}`);
+        setSaving(false);
+        return;
+      }
+
+      const { data: publicUrlData } = supabase.storage
+        .from('avatars')
+        .getPublicUrl(filePath);
+
+      newAvatarUrl = publicUrlData?.publicUrl ?? null;
+    }
+
     const { error } = await supabase.from('profiles').upsert({
       id: user.id,
       display_name: displayName || null,
@@ -96,6 +265,7 @@ export default function ProfilePage() {
       experience_level: experienceLevel || null,
       preferred_tracks: preferredTracks || null,
       is_public_profile: isPublicProfile,
+      avatar_url: newAvatarUrl,
       updated_at: new Date().toISOString(),
     });
 
@@ -106,8 +276,21 @@ export default function ProfilePage() {
       return;
     }
 
+    // Update local state with new avatar URL
+    if (newAvatarUrl !== avatarUrl) {
+      setAvatarUrl(newAvatarUrl);
+      setAvatarFile(null);
+      if (avatarPreview) {
+        URL.revokeObjectURL(avatarPreview);
+        setAvatarPreview(null);
+      }
+    }
+
     setSuccessMsg('Profile saved.');
   }
+
+  const avatarInitial = (displayName || fullName || '?').charAt(0).toUpperCase();
+  const displayedAvatar = avatarPreview || avatarUrl;
 
   if (loading) {
     return (
@@ -147,6 +330,34 @@ export default function ProfilePage() {
           <h1 className="text-2xl font-bold text-center">Your Profile</h1>
 
           <form onSubmit={handleSubmit} className="space-y-4">
+            {/* Avatar Upload Section */}
+            <section className="mb-4 flex items-center gap-4 pb-4 border-b border-slate-800">
+              <div className="h-16 w-16 shrink-0 rounded-full border-2 border-sky-500/50 bg-slate-950 overflow-hidden flex items-center justify-center text-2xl font-bold text-sky-400">
+                {displayedAvatar ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={displayedAvatar}
+                    alt="Profile avatar"
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  <span>{avatarInitial}</span>
+                )}
+              </div>
+              <div className="flex-1">
+                <label className="text-sm text-slate-300">Profile picture</label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="mt-1 block w-full text-sm text-slate-400 file:mr-3 file:rounded-md file:border-0 file:bg-slate-700 file:px-3 file:py-1.5 file:text-sm file:text-slate-200 hover:file:bg-slate-600"
+                  onChange={handleAvatarFileChange}
+                />
+                <p className="text-xs text-slate-500 mt-1">
+                  JPG or PNG, up to ~2MB.
+                </p>
+              </div>
+            </section>
+
             <div>
               <label className="block text-sm mb-1">Display name</label>
               <input
@@ -233,6 +444,62 @@ export default function ProfilePage() {
           </form>
         </div>
       </main>
+
+      {/* Crop Modal */}
+      {isCropModalOpen && selectedImageUrl && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80">
+          <div className="w-full max-w-lg rounded-lg border border-slate-700 bg-slate-900 p-4">
+            <h2 className="text-lg font-semibold mb-4">Crop your avatar</h2>
+            
+            {/* Cropper container */}
+            <div className="relative h-64 w-full bg-slate-950 rounded-md overflow-hidden">
+              <Cropper
+                image={selectedImageUrl}
+                crop={crop}
+                zoom={zoom}
+                aspect={1}
+                cropShape="round"
+                showGrid={false}
+                onCropChange={setCrop}
+                onCropComplete={onCropComplete}
+                onZoomChange={setZoom}
+              />
+            </div>
+
+            {/* Zoom slider */}
+            <div className="mt-4">
+              <label className="text-sm text-slate-400">Zoom</label>
+              <input
+                type="range"
+                min={1}
+                max={3}
+                step={0.1}
+                value={zoom}
+                onChange={(e) => setZoom(Number(e.target.value))}
+                className="w-full mt-1 accent-sky-500"
+              />
+            </div>
+
+            {/* Buttons */}
+            <div className="flex justify-end gap-3 mt-4">
+              <button
+                type="button"
+                onClick={handleCancelCrop}
+                className="rounded-md border border-slate-600 px-4 py-2 text-sm hover:bg-slate-800 transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleUseCrop}
+                className="rounded-md bg-sky-500 px-4 py-2 text-sm font-semibold hover:bg-sky-600 transition"
+              >
+                Use this crop
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

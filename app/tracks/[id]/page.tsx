@@ -38,6 +38,18 @@ type Lap = {
   lap_time_ms: number;
   date: string | null;
   is_public: boolean | null;
+  session_label: string | null;
+  conditions: string | null;
+  temperature_band: string | null;
+};
+
+type SessionGroup = {
+  label: string;
+  date: string | null;
+  conditions: string | null;
+  temperature_band: string | null;
+  laps: Lap[];
+  bestLapMs: number;
 };
 
 function formatLapTime(ms: number): string {
@@ -50,6 +62,33 @@ function formatLapTime(ms: number): string {
   const msStr = millis.toString().padStart(3, '0');
 
   return `${minutes}:${secStr}.${msStr}`;
+}
+
+function formatDelta(deltaMs: number): string {
+  const sign = deltaMs >= 0 ? '+' : '-';
+  const absMs = Math.abs(deltaMs);
+  const secs = Math.floor(absMs / 1000);
+  const ms = absMs % 1000;
+  return `${sign}${secs}.${ms.toString().padStart(3, '0')}`;
+}
+
+function humanReadableConditions(value: string | null | undefined): string {
+  switch (value) {
+    case 'dry_warm': return 'Dry – sunny';
+    case 'dry_cool': return 'Dry – cool';
+    case 'damp': return 'Damp';
+    case 'wet': return 'Wet';
+    default: return '';
+  }
+}
+
+function humanReadableTemperature(value: string | null | undefined): string {
+  switch (value) {
+    case 'cool': return 'Cool';
+    case 'normal': return 'Normal';
+    case 'hot': return 'Hot';
+    default: return '';
+  }
 }
 
 export default function TrackDetailPage() {
@@ -65,6 +104,7 @@ export default function TrackDetailPage() {
   const [userId, setUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<'all' | 'sessions'>('all');
 
   useEffect(() => {
     async function loadData() {
@@ -182,6 +222,52 @@ export default function TrackDetailPage() {
   const myPublicBestRank = myPublicBestIndex >= 0 ? myPublicBestIndex + 1 : null;
   const myBestIsPublic = myBestLap?.is_public === true;
 
+  // Group laps by session_label (or "Unsorted" if no label)
+  const sessionGroups: SessionGroup[] = [];
+  const sessionMap = new Map<string, Lap[]>();
+  const unsortedLaps: Lap[] = [];
+
+  for (const lap of laps) {
+    if (lap.session_label) {
+      const key = `${lap.session_label}__${lap.date || 'nodate'}`;
+      if (!sessionMap.has(key)) {
+        sessionMap.set(key, []);
+      }
+      sessionMap.get(key)!.push(lap);
+    } else {
+      unsortedLaps.push(lap);
+    }
+  }
+
+  // Convert map to array of session groups
+  for (const [key, sessionLaps] of sessionMap.entries()) {
+    // Sort laps within session by lap_time_ms ascending
+    const sortedLaps = [...sessionLaps].sort((a, b) => a.lap_time_ms - b.lap_time_ms);
+    const bestLapMs = sortedLaps[0]?.lap_time_ms ?? 0;
+    const firstLap = sortedLaps[0];
+
+    sessionGroups.push({
+      label: firstLap.session_label || 'Unknown',
+      date: firstLap.date,
+      conditions: firstLap.conditions,
+      temperature_band: firstLap.temperature_band,
+      laps: sortedLaps,
+      bestLapMs,
+    });
+  }
+
+  // Sort sessions by date (newest first), then by label
+  sessionGroups.sort((a, b) => {
+    if (a.date && b.date) {
+      return b.date.localeCompare(a.date);
+    }
+    if (a.date) return -1;
+    if (b.date) return 1;
+    return a.label.localeCompare(b.label);
+  });
+
+  const hasSessionLaps = sessionGroups.length > 0;
+
   return (
     <>
       <TopNav />
@@ -292,12 +378,42 @@ export default function TrackDetailPage() {
             )}
           </div>
 
-          {/* My Laps at this Track */}
+          {/* My Laps Section with View Toggle */}
           <div className="space-y-3">
-            <h2 className="text-lg font-semibold">My laps at {track.name}</h2>
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold">My laps at {track.name}</h2>
+              {hasSessionLaps && (
+                <div className="flex gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setViewMode('all')}
+                    className={`px-3 py-1 rounded text-xs font-medium transition ${
+                      viewMode === 'all'
+                        ? 'bg-sky-500 text-white'
+                        : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                    }`}
+                  >
+                    All laps
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setViewMode('sessions')}
+                    className={`px-3 py-1 rounded text-xs font-medium transition ${
+                      viewMode === 'sessions'
+                        ? 'bg-sky-500 text-white'
+                        : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                    }`}
+                  >
+                    By session
+                  </button>
+                </div>
+              )}
+            </div>
+
             {laps.length === 0 ? (
               <p className="text-sm text-slate-400">No laps recorded at this track yet.</p>
-            ) : (
+            ) : viewMode === 'all' ? (
+              /* All Laps View */
               <div className="space-y-2">
                 {laps.map((lap, index) => {
                   const car = carMap.get(lap.car_id);
@@ -318,6 +434,9 @@ export default function TrackDetailPage() {
                         </p>
                         <p className="text-sm text-slate-400">
                           {lap.date || 'No date'}
+                          {lap.session_label && (
+                            <span className="ml-2 text-xs text-slate-500">• {lap.session_label}</span>
+                          )}
                         </p>
                       </div>
                       <div className="text-lg font-bold tabular-nums">
@@ -326,6 +445,108 @@ export default function TrackDetailPage() {
                     </div>
                   );
                 })}
+              </div>
+            ) : (
+              /* Sessions View */
+              <div className="space-y-4">
+                {sessionGroups.map((session, sessionIdx) => (
+                  <div
+                    key={`${session.label}-${session.date}-${sessionIdx}`}
+                    className="rounded-lg border border-slate-700 bg-slate-900 overflow-hidden"
+                  >
+                    {/* Session Header */}
+                    <div className="bg-slate-800 px-4 py-3 border-b border-slate-700">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="font-semibold text-sky-300">{session.label}</p>
+                          <p className="text-xs text-slate-400">
+                            {session.date || 'No date'}
+                            {session.conditions && ` • ${humanReadableConditions(session.conditions)}`}
+                            {session.temperature_band && ` • ${humanReadableTemperature(session.temperature_band)}`}
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-xs text-slate-400">Session best</p>
+                          <p className="font-bold tabular-nums text-emerald-400">
+                            {formatLapTime(session.bestLapMs)}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Session Laps */}
+                    <div className="divide-y divide-slate-800">
+                      {session.laps.map((lap, lapIdx) => {
+                        const car = carMap.get(lap.car_id);
+                        const delta = lap.lap_time_ms - session.bestLapMs;
+                        const isBest = delta === 0;
+
+                        return (
+                          <div
+                            key={lap.id}
+                            className={`flex items-center gap-3 px-4 py-2 ${
+                              isBest ? 'bg-emerald-500/10' : ''
+                            }`}
+                          >
+                            <div className="w-6 text-center text-sm text-slate-500">
+                              {lapIdx + 1}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm truncate">
+                                {car ? `${car.make} ${car.model}` : 'Unknown car'}
+                              </p>
+                            </div>
+                            <div className="text-right">
+                              <p className={`font-bold tabular-nums ${isBest ? 'text-emerald-400' : ''}`}>
+                                {formatLapTime(lap.lap_time_ms)}
+                              </p>
+                              {!isBest && (
+                                <p className="text-xs text-red-400 tabular-nums">
+                                  {formatDelta(delta)}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+
+                {/* Unsorted Laps (no session label) */}
+                {unsortedLaps.length > 0 && (
+                  <div className="rounded-lg border border-slate-700 bg-slate-900 overflow-hidden">
+                    <div className="bg-slate-800 px-4 py-3 border-b border-slate-700">
+                      <p className="font-semibold text-slate-400">Other laps (no session)</p>
+                      <p className="text-xs text-slate-500">{unsortedLaps.length} lap{unsortedLaps.length !== 1 ? 's' : ''}</p>
+                    </div>
+                    <div className="divide-y divide-slate-800">
+                      {unsortedLaps.map((lap, lapIdx) => {
+                        const car = carMap.get(lap.car_id);
+
+                        return (
+                          <div
+                            key={lap.id}
+                            className="flex items-center gap-3 px-4 py-2"
+                          >
+                            <div className="w-6 text-center text-sm text-slate-500">
+                              {lapIdx + 1}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm truncate">
+                                {car ? `${car.make} ${car.model}` : 'Unknown car'}
+                              </p>
+                              <p className="text-xs text-slate-500">{lap.date || 'No date'}</p>
+                            </div>
+                            <div className="font-bold tabular-nums">
+                              {formatLapTime(lap.lap_time_ms)}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>

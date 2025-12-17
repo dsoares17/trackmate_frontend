@@ -10,6 +10,7 @@ type Profile = {
   id: string;
   display_name: string | null;
   is_public_profile: boolean | null;
+  avatar_url: string | null;
 };
 
 type Car = {
@@ -57,6 +58,7 @@ export default function DriverProfilePage() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [viewerId, setViewerId] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [isAvatarOpen, setIsAvatarOpen] = useState(false);
 
   const [profile, setProfile] = useState<Profile | null>(null);
   const [cars, setCars] = useState<Car[]>([]);
@@ -75,7 +77,7 @@ export default function DriverProfilePage() {
 
       // Load data in parallel
       const [profileRes, carsRes, lapsRes, tracksRes] = await Promise.all([
-        supabase.from('profiles').select('id, display_name, is_public_profile').eq('id', userId).maybeSingle(),
+        supabase.from('profiles').select('id, display_name, is_public_profile, avatar_url').eq('id', userId).maybeSingle(),
         supabase.from('cars').select('*').eq('user_id', userId),
         supabase.from('laps').select('*').eq('user_id', userId).eq('is_public', true).order('lap_time_ms', { ascending: true }),
         supabase.from('tracks').select('id, name, country, length_km'),
@@ -211,9 +213,23 @@ export default function DriverProfilePage() {
             {/* Left side */}
             <div className="flex items-center gap-4">
               {/* Avatar */}
-              <div className="h-16 w-16 shrink-0 rounded-full border-2 border-sky-500/50 bg-slate-900 flex items-center justify-center text-2xl font-bold text-sky-400">
-                {avatarInitial}
-              </div>
+              {profile.avatar_url ? (
+                <button
+                  onClick={() => setIsAvatarOpen(true)}
+                  className="h-16 w-16 shrink-0 rounded-full border-2 border-sky-500/50 bg-slate-900 overflow-hidden flex items-center justify-center text-2xl font-bold text-sky-400 hover:border-sky-400 transition cursor-pointer"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={profile.avatar_url}
+                    alt={displayName}
+                    className="h-full w-full object-cover"
+                  />
+                </button>
+              ) : (
+                <div className="h-16 w-16 shrink-0 rounded-full border-2 border-sky-500/50 bg-slate-900 overflow-hidden flex items-center justify-center text-2xl font-bold text-sky-400">
+                  <span>{avatarInitial}</span>
+                </div>
+              )}
               <div>
                 <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">
                   {displayName}
@@ -373,6 +389,29 @@ export default function DriverProfilePage() {
 
         </div>
       </main>
+
+      {/* Avatar Lightbox Modal */}
+      {isAvatarOpen && profile.avatar_url && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80"
+          onClick={() => setIsAvatarOpen(false)}
+        >
+          <div className="relative" onClick={(e) => e.stopPropagation()}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={profile.avatar_url}
+              alt={displayName}
+              className="max-h-[90vh] max-w-[90vw] rounded-lg"
+            />
+            <button
+              onClick={() => setIsAvatarOpen(false)}
+              className="absolute -top-3 -right-3 rounded-full bg-slate-900 border border-slate-700 px-2.5 py-1 text-sm hover:bg-slate-800 transition"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
     </>
   );
 }
